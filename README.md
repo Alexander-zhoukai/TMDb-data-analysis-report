@@ -1,9 +1,8 @@
 # TMDb-data-analysis-report
 
-a, 学习用python进行数据分析一段时间了，也跟着书本、网上案例，包括工作中的数据做了很多分析工作。用一个项目做阶段性的小结。
-b, 该项目是kaggle上的经典项目，美国百年间的电影数据分析，也是一个基础数据分析项目。
-c, 项目数据集是tmdb_5000_credits、tmdb_5000_movies，这两个文件比较大，这里没有上传，链接为：https://github.com/Alexander-zhoukai/Analysis-and-Prediction-on-TMDb5000
-d, E-mail：chow28@126.com
+学习用python进行数据分析一段时间了，也跟着书本、网上案例，包括工作中的数据做了很多分析工作。用一个项目做阶段性的小结。该项目是kaggle上的经典项目，美国百年间的电影数据分析，也是一个基础数据分析项目。项目数据集是tmdb_5000_credits、tmdb_5000_movies，这两个文件比较大，这里没有上传，链接为：https://github.com/Alexander-zhoukai/Analysis-and-Prediction-on-TMDb5000
+
+E-mail：chow28@126.com
 
 TMDb数据分析报告目录
 
