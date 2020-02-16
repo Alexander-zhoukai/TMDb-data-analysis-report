@@ -1,0 +1,412 @@
+﻿# -*- coding: utf-8 -*-
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import json
+import warnings
+warnings.filterwarnings('ignore')
+plt.rcParams['font.sans-serif'] = ['SimHei']   # 处理中文乱码
+
+# 导入数据
+movies = pd.read_csv('D:/DataAnalysis/cases/TMDb1/tmdb_5000_movies.txt')
+credits= pd.read_csv('D:/DataAnalysis/cases/TMDb1/tmdb_5000_credits.txt')
+
+
+# （1）查看数据维度：shape属性
+movies.shape
+credits.shape
+# （2）查看数据字段：columns属性
+movies.columns
+credits.columns
+# （3）查看数据统计信息：describe方法
+movies.describe()
+credits.describe()
+# （4）查看数据框信息：info方法
+movies.info()
+credits.info()
+# （5）展示数据头：head方法
+movies.head()
+credits.head()
+
+# 删除重复列
+credits.drop('title', axis = 1, inplace = True)
+
+# 合并数据表
+full = pd.merge(movies, credits, how = 'left', left_on='id', right_on='movie_id')
+# 查看信息
+full.info()
+
+# 删除重复列
+full.drop(['homepage', 'original_title', 'overview', 'spoken_languages', 'status', 'tagline', 'movie_id'], axis = 1, inplace = True)
+
+# 填充runtime列缺失值
+full.loc[full['runtime'].isnull()]
+full.loc[2656, 'runtime'] = 94
+full.loc[4140, 'runtime'] = 240
+
+# 填充release_date列缺失值
+movies[movies['release_date'].isnull()]
+movies.loc[4553, 'release_date'] = '2010-06-01'
+
+# 解码
+# json类型的字段
+Cols = ['genres', 'keywords', 'production_companies', 'production_countries', 'cast', 'crew']
+# 解码1，apply(json.loads)
+for col in Cols:
+    full[col] = full[col].apply(json.loads)   
+# 解码2，apply(get####)
+def getname(x):
+    list = [i['name'] for i in x]
+    return ','.join(list)
+
+for col in Cols[0:4]:
+    full[col] = full[col].apply(getname)
+    
+def getcharacter(x):
+    list = [i['character'] for i in x]
+    return ','.join(list[0:2])
+    
+full['cast'] = full['cast'].apply(getcharacter)
+
+def getdirector(x):
+    list = [i['name'] for i in x if i['job'] == 'Director']
+    return ','.join(list)
+    
+full['crew'] = full['crew'].apply(getdirector)
+
+# 去重4步
+genreset = set()
+for x in full['genres'].str.split(','):
+    genreset.update(x)
+genreset.discard('')
+genrelist = list(genreset)
+
+# 数字化，五合一
+genre_df = pd.DataFrame()
+
+for genre in genrelist:
+    genre_df[genre] = full['genres'].str.contains(genre).map(lambda x: 1 if x else 0)
+    
+# 格式化转换
+full['release_date'] = pd.to_datetime(full['release_date'], format = '%Y-%m-%d').dt.year
+
+# 重名列名
+name_dict = {'release_date': 'year', 'cast': 'actor', 'crew': 'director'} 
+full.rename(columns = name_dict, inplace = True)
+
+# ===========================================
+
+# 问题1：电影风格随时间变化的趋势
+# 1、构造数据框(截取+合并)
+genre_df['year'] = full['year']
+# 各种类型电影的数量随时间变化的趋势genre_by_year
+genre_by_year = genre_df.groupby('year').sum()
+# 各种类型电影的总数genreSum_by_year
+genreSum_by_year = genre_by_year.sum().sort_values() # 升序
+genreSum_by_year = genre_by_year.sum().sort_values(ascending = False) # 降序
+
+# 2、可视化
+# 可视化genreSum_by_year
+from pylab import rcParams
+params = {'legend.fontsize': 12, 
+          'legend.handlelength': 10}
+rcParams.update(params)   
+      
+fig = plt.figure(figsize=(20, 5))
+ax = plt.subplot(1, 1, 1)
+ax = genreSum_by_year.plot(kind = 'barh')
+plt.title('Film genre by year', fontsize = 18)
+plt.xlabel('genre', fontsize = 18)
+plt.ylabel('amount', fontsize = 18)
+fig.savefig('Film genre by year.png')
+
+# 可视化genre_by_year
+from pylab import rcParams
+params = {'legend.fontsize': 10, 
+          'legend.handlelength': 3}
+rcParams.update(params) 
+
+# genre_by_year = genre_by_year.loc[1960:2020, :]
+
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('Year', fontsize = 10)
+plt.ylabel('Amount', fontsize = 10)
+plt.xticks(range(1920, 2030, 5))
+plt.title('Film amount by year', fontsize = 10)
+plt.plot(genre_by_year)
+plt.legend(genre_by_year, loc = 'best')
+# plt.legend(genre_by_year, loc = 'best', ncol = 2)
+fig.savefig('Film amount by year_8.png')
+# genre_by_year.plot()  #理解为默认设置，不同于上面设定了各个参数
+
+# 3、分析结果
+# 90年代开始，整个电影市场呈现爆发式增长
+# 其中drama、Comedy、Thriller、Romance、Adventrue类电影增长最快。
+
+# ===========================================
+
+# 问题2：不同风格电影的收益能力
+# 1、构造数据框(定义+合并+截取+计算)
+full['profit'] = full['revenue'] - full['budget']
+profit_df = pd.DataFrame()
+profit_df = pd.concat([genre_df.iloc[:, :-1], full['profit']], axis = 1)
+# 各种类型电影的收益profit_by_genre
+# 构造Series，保存profit，其index为电影类型genrelist。（定义+计算）
+# 此处的计算是重点，要理解数据框结构，掌握计算逻辑，灵活运用。
+profit_by_genre = pd.Series(index = genrelist)
+for gen in genrelist:
+    profit_by_genre.loc[gen] = profit_df.loc[:, [gen, 'profit']].groupby(gen).sum().loc[1, 'profit']
+
+# 排序，升序    
+profit_by_genre = profit_by_genre.sort_values()
+
+
+# 2、可视化profit
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('Profit', fontsize = 12)
+plt.ylabel('Genre', fontsize = 12)
+plt.title('Profit by Genre', fontsize = 12)
+profit_by_genre.plot(kind = 'barh')
+fig.savefig('Profit by Genre_1.png')
+
+
+# 构造Series，保存budget,并可视化
+budget_df = pd.DataFrame()
+budget_df = pd.concat([genre_df.iloc[:, :-1], full['budget']], axis = 1)
+budget_by_genre = pd.Series(index = genrelist)
+for gen in genrelist:
+    budget_by_genre.loc[gen] = budget_df.loc[:, [gen, 'budget']].groupby(gen).sum().loc[1, 'budget']
+    
+budget_by_genre = budget_by_genre.sort_values()
+
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('Budget', fontsize = 15)
+plt.ylabel('Genre', fontsize = 15)
+plt.title('Budget by Genre', fontsize = 15)
+profit_by_genre.plot(kind = 'barh')
+fig.savefig('Budget by Genre_1.png')
+
+# 3、分析结果
+# 可以看出Adventure、Action、Comedy、Drama和Thriller电影收益最高。
+
+# ===========================================
+# 问题3：不同风格电影的受欢迎程度
+# 构造数据框popu_by_genre
+popu_df = pd.DataFrame()
+popu_df = pd.concat([genre_df.iloc[:, :-1], full['popularity']], axis = 1)
+popu_by_genre = pd.Series(index = genrelist)
+for gen in genrelist:
+    popu_by_genre.loc[gen] = popu_df.loc[:, [gen, 'popularity']].groupby(gen).mean().loc[1, 'popularity']
+    
+popu_by_genre.sort_values(inplace=True)
+# 可视化
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('Mean of popularity', fontsize = 15)
+plt.ylabel('Genre', fontsize = 15)
+plt.title('Mean of popularity', fontsize = 15)
+popu_by_genre.plot(kind = 'barh')
+fig.savefig('popularity_by_genre_1.png')
+# 分析结果
+# 可以看出，Adventure、Animation最受欢迎
+
+# ===========================================
+
+# 问题4： 不同类型电影的平均评分
+# 构造数据框vote_avg_by_genre
+vote_avg_df = pd.DataFrame()
+vote_avg_df = pd.concat([genre_df.iloc[:, :-1], full['vote_average']], axis = 1)
+vote_avg_by_genre = pd.Series(index = genrelist)
+for gen in genrelist:
+    vote_avg_by_genre.loc[gen] = vote_avg_df.loc[:, [gen, 'vote_average']].groupby(gen).mean().loc[1, 'vote_average']
+    
+vote_avg_by_genre.sort_values(inplace=True)  #排序、升序
+
+full['popularity'].corr(full['vote_average'])   #相关性值为： 0.27
+# 可以看出，电影的平均受欢迎程度与平均评分的相关性很低
+
+# 可视化分类平均分 vote_avg_by_genre
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('vote_average', fontsize = 15)
+plt.ylabel('Genre', fontsize = 15)
+plt.xlim(5, 7, 0.5)
+# plt.xticks(range(5, 7, 1))  # 给效果不够好。
+plt.title('vote avg by genre', fontsize = 15)
+vote_avg_by_genre.plot(kind = 'barh')
+fig.savefig('vote_avg_by_genre_3.png')
+# 分析结果
+# 不同类型电影的平均评分，数据很接近。没有显著的差异，最低值与最高值的差距不到1
+
+# 可视化全部平均分，用频率分布直方图sns.distplot(data, bins=)
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('vote_average', fontsize = 12)
+plt.ylabel('distributio of vote_avg', fontsize = 12)
+plt.xticks(range(11))
+plt.title('vote avg by genre', fontsize = 12)
+sns.distplot(full['vote_average'], bins = 30)
+fig.savefig('distributio of vote_avg.png')
+# 分析结果
+# 不同类型电影的平均评分，在5-8之间
+
+# ===========================================
+
+# 问题5： 不同类型电影的平均评分次数
+# 构造数据框 vote_count_df、vote_count_avg_by_genre
+vote_count_df = pd.DataFrame()
+vote_count_df = pd.concat([genre_df.iloc[:, :-1], full['vote_count']], axis = 1)
+vote_count_avg_by_genre = pd.Series(index = genrelist)
+for gen in genrelist:
+    vote_count_avg_by_genre.loc[gen] = vote_count_df.loc[:, [gen, 'vote_count']].groupby(gen).mean().loc[1, 'vote_count']
+
+vote_avg_by_genre.sort_values(inplace=True)
+
+# 可视化vote_count_avg_by_genre
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('amount', fontsize = 15)
+plt.ylabel('Genre', fontsize = 15)
+plt.title('vote_count_avg_by_genre', fontsize = 15)
+vote_count_avg_by_genre.plot(kind = 'barh')
+fig.savefig('vote_count_avg_by_genre_1.png')
+# 分析结果 
+# 可以看出，Adventure、Science Fiction两类电影获得的评价平均次数是最多的。
+
+# ===========================================
+
+# 问题6：比较Universal Picture与Paramount Picture两家巨头公司的业绩
+# 构造数据框 
+# 构造两公司业绩数据框revenue_by_company
+# 公司列表
+company_list = ['Paramount Pictures', 'Universal Pictures']
+company_df = pd.DataFrame()
+for company in company_list:
+    company_df[company] = full['production_companies'].str.contains(company).apply(lambda x: 1 if x else 0)
+ 
+# company_df = pd.merge([company_df, genre_df.loc[:, :-1], full['revenue']], axis = 1)
+company_df = pd.concat([company_df, full['revenue']], axis = 1)
+
+revenue_by_company = pd.Series(index = company_list)
+for company in company_list:
+    revenue_by_company.loc[company] = company_df.loc[:, [company, 'revenue']].groupby(company).sum().loc[1, 'revenue']
+
+# 可视化两公司业绩数据框revenue_by_company
+fig = plt.figure(figsize=(20, 12))
+plt.xlabel('amount', fontsize = 15)
+plt.ylabel('Genre', fontsize = 15)
+plt.title('Paramount vs Universal ', fontsize = 15)
+revenue_by_company.plot(kind = 'barh')
+fig.savefig('revenue_by_company_1.png') 
+
+# 分析结果  
+# Universal Pictures公司的票房收入高于Paramount Pictures公司
+
+# ===========================================
+
+# 问题7：原创电影和改编电影数量的对比
+# 构造数据框 
+# 原创的电影：original - based on = false
+# 改编来的电影：recompose - based on = true
+
+original_recompose_list = ['original', 'recompose']
+original_recompose_df = pd.DataFrame()
+original_recompose_df['type'] = full['keywords'].str.contains('based on').apply(lambda x: 1 if x else 0)
+
+# original_vs_recompose = pd.DataFrame(index = original_recompose_list, columns = ['count', 'budget', 'revenue', 'profit'])
+original_vs_recompose = pd.Series(index = original_recompose_list )
+original_vs_recompose['original'] = original_recompose_df.groupby('type').type.count().loc[0]
+original_vs_recompose['recompose'] = original_recompose_df.groupby('type').type.count().loc[1]
+
+# 可视化 
+fig = plt.figure(figsize=(10, 8))
+plt.xlabel('company', fontsize = 10)
+plt.ylabel('count', fontsize = 10)
+plt.title('Paramount vs Universal ', fontsize = 10)
+original_vs_recompose.plot(kind = 'bar')
+fig.savefig('original_vs_recompose_1.png')
+# 分析结果 
+# 原创电影远远多于改编电影
+
+# 问题8：原创电影和改编电影利润的对比
+# 构造数据框 
+prof_original_recompose = pd.Series(index = original_recompose_list)
+prof_original_recompose['original'] = original_recompose_df.groupby('type').profit.sum().loc[0]
+prof_original_recompose['recompose'] = original_recompose_df.groupby('type').profit.sum().loc[1]
+# 可视化 
+fig = plt.figure(figsize=(10, 8))
+plt.xlabel('company', fontsize = 10)
+plt.ylabel('count', fontsize = 10)
+plt.title('profit Paramount vs Universal ', fontsize = 10)
+prof_original_recompose.plot(kind = 'bar')
+fig.savefig('profit Paramount vs Universal_1.png')
+# 分析结果  
+# 原创电影远远多于改编电影 
+
+# ===========================================
+
+# 问题9：电影票房收入与哪些因素最相关
+# 构造数据框,票房收入revenue_df
+full[['budget', 'popularity', 'revenue', 'runtime', 'vote_average', 'vote_count']].corr()
+full[['budget', 'popularity', 'revenue', 'runtime', 'vote_average', 'vote_count']].corr().iloc[2]
+# 票房收入与预算、受欢迎程度、评价次数三个指标相关性较强
+revenue_df = full[['popularity', 'vote_count', 'budget', 'revenue']]
+# 可视化 
+# 三个：散点图+线性回归线
+fig = plt.figure(figsize = (15, 5))
+
+ax1 = plt.subplot(1, 3, 1)
+ax1 = sns.regplot(x='popularity', y='revenue', data = revenue_df)  
+ax1.text(400, 3e9, 'r=0.64', fontsize=12)
+plt.xlabel('popularity', fontsize=12)
+plt.ylabel('revenue', fontsize=12)
+plt.title('revenue by popularity', fontsize=15)
+
+ax2 = plt.subplot(1, 3, 2)
+ax2 = sns.regplot(x='vote_count', y='revenue', data = revenue_df, color='g')  
+ax2.text(5800, 2.1e9, 'r=0.78', fontsize=12)
+plt.xlabel('vote_count', fontsize=12)
+plt.ylabel('revenue', fontsize=12)
+plt.title('revenue by vote_count', fontsize=15)
+
+ax3 = plt.subplot(1, 3, 3)
+ax3 = sns.regplot(x='budget', y='revenue', data = revenue_df, color='r')  
+ax3.text(1.6e8, 2.1e9, 'r=0.73', fontsize=12)
+plt.xlabel('budget', fontsize=12)
+plt.ylabel('revenue', fontsize=12)
+plt.title('revenue by budget', fontsize=15)
+
+fig.savefig('revenue.png')
+# 分析结果  
+# 票房收入与预算、受欢迎程度、评价次数三个指标相关性较强
+
+# ===到此完========================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
